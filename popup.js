@@ -3,6 +3,7 @@ import FlowService from "./flow-service.js";
 
 // UI Elements
 const elements = {
+  flowDownloadSection : document.getElementById("flowDownloadSection"),
   loader: document.getElementById("loader"),
   flowNameContainer: document.getElementById("flowNameContainer"),
   flowName: document.getElementById("flowName"),
@@ -15,15 +16,19 @@ const elements = {
   runAnalysisBtn: document.getElementById("runAnalysisBtn"),
   statusContainer: document.getElementById("statusContainer"),
   status: document.getElementById("status"),
+  searchFlowSection: document.getElementById("searchFlowSection"),
+  flowSearchInput: document.getElementById("flowSearchInput"),
+  flowSearchResults: document.getElementById("flowSearchResults"),
+  analysisContainer: document.getElementById("analysisContainer"),
+  analysisTable: document.getElementById("analysisTable"),
+  analysisResults: document.getElementById("analysisResults"),
+  noIssues: document.getElementById("no-issues"),
 };
 
-// State
 let currentFlow = null;
+let debounceTimeout = null;
+let flowService = null;
 
-/**
- * Show an error message in the UI
- * @param {string} message - Error message to display
- */
 function showError(message) {
   elements.loader.classList.add("hidden");
   elements.flowNameContainer.classList.add("hidden");
@@ -31,227 +36,257 @@ function showError(message) {
   elements.errorMessage.textContent = message;
 }
 
-/**
- * Show flow information in the UI
- * @param {Object} flow - Flow object with metadata
- */
 function showFlowInfo(flow) {
   elements.loader.classList.add("hidden");
   elements.errorContainer.classList.add("hidden");
   elements.flowNameContainer.classList.remove("hidden");
 
-  elements.flowName.textContent =
-    flow.MasterLabel || flow.FullName || "Unknown";
+  elements.flowName.textContent = flow.MasterLabel || flow.FullName || "Unknown";
   elements.flowVersion.textContent = flow.VersionNumber || "-";
 
-  // Enable buttons
-  elements.describeFlowBtn.disabled = false; // Enabled describe button
+  elements.describeFlowBtn.disabled = false;
   elements.downloadBtn.disabled = false;
   elements.copyBtn.disabled = false;
+  elements.runAnalysisBtn.disabled = false;
 }
 
-/**
- * Show status message
- * @param {string} message - Status message
- * @param {boolean} isSuccess - Whether it's a success message
- */
 function showStatus(message, isSuccess = true) {
   elements.statusContainer.classList.remove("hidden");
-  elements.statusContainer.classList.toggle("success", isSuccess);
-  elements.statusContainer.classList.toggle("error", !isSuccess);
-
-  elements.status.textContent = message;
   elements.status.classList.toggle("success", isSuccess);
   elements.status.classList.toggle("error", !isSuccess);
+  elements.status.textContent = message;
 
-  // Clear status after 3 seconds
   setTimeout(() => {
     elements.statusContainer.classList.add("hidden");
   }, 3000);
 }
 
-/**
- * Initialize the popup
- */
-async function initializePopup() {
+async function handleFlowSelection(flowVersionId) {
   try {
-    // Initialize Salesforce connection
-    const connection = await new SFConnection().init();
-
-    if (!connection) {
-      throw new Error(
-        "Failed to connect to Salesforce. Please make sure you're logged in to your Salesforce org."
-      );
-    }
-
-    // Initialize Flow service
-    const flowService = new FlowService(connection);
-
-    // Get flow ID from URL
-    const flowId = await flowService.getFlowIdFromCurrentTab();
-
-    if (!flowId) {
-      throw new Error(
-        "No Flow ID found in the current tab. Please navigate to a Salesforce Flow."
-      );
-    }
-
-    // Fetch flow data
-    currentFlow = await flowService.fetchFlow(flowId);
-
-    if (!currentFlow || !currentFlow.Metadata) {
-      throw new Error("Failed to load flow metadata. Please try again.");
-    }
-
-    // Update UI with flow information
+    currentFlow = await flowService.fetchFlow(flowVersionId);
+    if (!currentFlow || !currentFlow.Metadata) throw new Error("Failed to load metadata.");
     showFlowInfo(currentFlow);
-
-    // Set up event listeners for buttons
-    elements.downloadBtn.addEventListener("click", async () => {
-      try {
-        const success = await flowService.downloadMetadata(currentFlow);
-        if (success) {
-          showStatus("Flow metadata downloaded successfully.");
-        } else {
-          showStatus("Failed to download flow metadata.", false);
-        }
-      } catch (error) {
-        showStatus(`Error: ${error.message}`, false);
-      }
-    });
-
-    elements.copyBtn.addEventListener("click", async () => {
-      try {
-        const success = await flowService.copyMetadataToClipboard(
-          currentFlow.Metadata
-        );
-        if (success) {
-          showStatus("Flow metadata copied to clipboard.");
-        } else {
-          showStatus("Failed to copy metadata to clipboard.", false);
-        }
-      } catch (error) {
-        showStatus(`Error: ${error.message}`, false);
-      }
-    });
-
-    elements.describeFlowBtn.addEventListener("click", async () => {
-      try {
-        const success = flowService.describeThisFlow(currentFlow.Metadata);
-
-        showStatus(
-          success
-            ? "Prompt copied to describe this flow, paste it in any LLM"
-            : "Failed to copy describe the flow prompt, try again later.",
-          success
-        );
-      } catch (error) {
-        showStatus(`Error: ${error.message}`, false);
-        console.error("Error describing flow:", error);
-      }
-    });
-
-    elements.runAnalysisBtn.addEventListener("click", () => {
-      try {
-        const severityClassMap = {
-          High: "high-severity",
-          Medium: "medium-severity",
-          Low: "low-severity",
-        };
-
-        const issues = [];
-
-        const dmlElementsInsideLoops = flowService.findDMLElementsInsideLoops(
-          currentFlow.Metadata
-        );
-
-        if (
-          dmlElementsInsideLoops &&
-          Array.isArray(dmlElementsInsideLoops.dmlElements) &&
-          dmlElementsInsideLoops.dmlElements.length > 0
-        ) {
-          issues.push({
-            issue: "DML Inside Loop",
-            severity: "High",
-            description: "Flow contains DML operations inside loops.",
-            elements: [...dmlElementsInsideLoops.dmlElements],
-          });
-        }
-
-        const soqlInsideLoops = flowService.findSOQLInsideLoops(
-          currentFlow.Metadata
-        );
-
-        if (
-          soqlInsideLoops &&
-          Array.isArray(soqlInsideLoops.recordLookups) &&
-          soqlInsideLoops.recordLookups.length > 0
-        ) {
-          issues.push({
-            issue: "SOQL Inside Loop",
-            severity: "High",
-            description: "Flow contains SOQL queries inside loops.",
-            elements: [...soqlInsideLoops.recordLookups], // spread into a new array for immutability
-          });
-        }
-
-        const hardcodedIds = flowService.findHardcodedIds(currentFlow.Metadata);
-        if (hardcodedIds.length) {
-          issues.push({
-            issue: "Hardcoded IDs",
-            severity: "Medium",
-            description: "Flow contains hardcoded Salesforce record IDs.",
-            elements: hardcodedIds,
-          });
-        }
-
-        const unusedItems = flowService.findUnusedItems(currentFlow.Metadata);
-
-        // Flatten all unused items regardless of category
-        const allUnusedResources = Object.values(unusedItems)
-          .flat()
-          .filter(Boolean); // Removes null/undefined if any
-
-        if (allUnusedResources.length) {
-          issues.push({
-            issue: "Unused Resources",
-            severity: "Low",
-            description:
-              "Flow has unused elements (variables, templates, etc.) that can be removed.",
-            elements: allUnusedResources,
-          });
-        }
-
-        const analysisResults = document.getElementById("analysisResults");
-        analysisResults.innerHTML = "";
-
-        issues.forEach((issue) => {
-          const row = document.createElement("tr");
-          row.classList.add(severityClassMap[issue.severity]);
-          const elementsList = issue.elements
-            .map((el) => el.name || el)
-            .join(", ");
-          // row.innerHTML = `<td>${issue.issue}</td><td>${issue.severity}</td><td>${issue.description}</td><td>${elementsList}</td>`;
-          row.innerHTML = `<td>${issue.issue}</td><td>${issue.description}</td><td>${elementsList}</td>`;
-          analysisResults.appendChild(row);
-        });
-
-        document.getElementById("analysisContainer").classList.toggle("hidden");
-
-        if (issues.length) {
-          document.getElementById("analysisTable").classList.remove("hidden");
-        } else {
-          document.getElementById("no-issues").classList.remove("hidden");
-        }
-      } catch (error) {
-        console.error("Error running analysis:", error);
-      }
-    });
-  } catch (error) {
-    showError(error.message);
-    console.error("Error initialising the flow :", error);
+  } catch (e) {
+    showError(e.message);
   }
 }
 
-// Initialize the popup when the DOM is loaded
+async function openFlow(flowVersionId) {
+  if (!flowVersionId) {
+    console.error("Flow Version ID is required to open the flow.");
+    return;
+  }
+
+  // Extract base URL from current window/tab
+  const baseUrl = await flowService.baseUrl();
+
+  // Construct the full Flow Builder URL
+  const flowUrl = `${baseUrl}/builder_platform_interaction/flowBuilder.app?flowId=${flowVersionId}`;
+
+  // Open in a new tab
+  window.open(flowUrl, '_blank');
+}
+
+
+async function loadFlowVersions(flowId, flowName) {
+  try {
+    const versions = await flowService.fetchFlowVersions(flowId);
+    elements.flowSearchResults.innerHTML = "";
+
+    versions.forEach((version) => {
+      const versionDiv = document.createElement("div");
+      versionDiv.classList.add("flow-search-result");
+    
+      // Create a clickable element using a span instead of a button
+      const versionText = document.createElement("span");
+      versionText.classList.add("flow-version-text");
+      versionText.textContent = `${flowName} (v${version.VersionNumber})`;
+    
+      // Add the click event listener to the span element
+      versionText.addEventListener("click", () => openFlow(version.Id));
+    
+      versionDiv.appendChild(versionText);
+      elements.flowSearchResults.appendChild(versionDiv);
+    });
+    
+  } catch (error) {
+    showError("Failed to load flow versions.");
+    console.error(error);
+  }
+}
+
+async function searchFlows(query) {
+  try {
+    const flowsNameIdMap = await flowService.fetchAllFlowDefinitions();
+
+    if (!flowsNameIdMap || flowsNameIdMap.size === 0) {
+      elements.flowSearchResults.innerHTML = "<p>No flows found.</p>";
+      return;
+    }
+
+    const filteredEntries = [...flowsNameIdMap.entries()].filter(([name]) =>
+      !query || name.toLowerCase().includes(query.toLowerCase())
+    );
+
+    if (filteredEntries.length === 0) {
+      elements.flowSearchResults.innerHTML = "<p>No matching flows found.</p>";
+      return;
+    }
+
+    elements.flowSearchResults.innerHTML = "";
+
+    filteredEntries.forEach(([flowName, flowId]) => {
+      const flowDiv = document.createElement("div");
+      flowDiv.classList.add("flow-search-result");
+    
+      // Create a clickable span instead of a button
+      const flowText = document.createElement("span");
+      flowText.classList.add("flow-name-text");
+      flowText.textContent = flowName;
+    
+      // Add the click event listener to the span element
+      flowText.addEventListener("click", () => loadFlowVersions(flowId, flowName));
+    
+      flowDiv.appendChild(flowText);
+      elements.flowSearchResults.appendChild(flowDiv);
+    });
+    
+  } catch (error) {
+    showError("Error searching flows.");
+    console.error(error);
+  }
+}
+
+async function initializePopup() {
+  try {
+    const connection = await new SFConnection().init();
+    if (!connection) throw new Error("Failed to connect to Salesforce.");
+    flowService = new FlowService(connection);
+
+    const flowVersionId = await flowService.getFlowIdFromCurrentTab();
+    if (!flowVersionId) {
+      elements.searchFlowSection.style.display = "block";
+      elements.flowDownloadSection.style.display = "none";
+      searchFlows(elements.flowSearchInput.value.trim());
+      elements.flowSearchInput.addEventListener("input", () => {
+        clearTimeout(debounceTimeout);
+        debounceTimeout = setTimeout(() => searchFlows(elements.flowSearchInput.value.trim()), 500);
+      });
+      return;
+    }
+
+    await handleFlowSelection(flowVersionId);
+    setupActionListeners();
+  } catch (error) {
+    showError(error.message);
+  }
+}
+
+function setupActionListeners() {
+  elements.downloadBtn.addEventListener("click", async () => {
+    try {
+      const success = await flowService.downloadMetadata(currentFlow);
+      showStatus(success ? "Metadata downloaded." : "Download failed.", success);
+    } catch (e) {
+      showStatus(`Error: ${e.message}`, false);
+    }
+  });
+
+  elements.copyBtn.addEventListener("click", async () => {
+    try {
+      const success = await flowService.copyMetadataToClipboard(currentFlow.Metadata);
+      showStatus(success ? "Copied to clipboard." : "Copy failed.", success);
+    } catch (e) {
+      showStatus(`Error: ${e.message}`, false);
+    }
+  });
+
+  elements.describeFlowBtn.addEventListener("click", () => {
+    try {
+      const success = flowService.describeThisFlow(currentFlow.Metadata);
+      showStatus(success ? "Prompt copied to clipboard." : "Copy failed.", success);
+    } catch (e) {
+      showStatus(`Error: ${e.message}`, false);
+    }
+  });
+
+  elements.runAnalysisBtn.addEventListener("click", () => {
+    try {
+      const issues = runFlowAnalysis(currentFlow.Metadata);
+      displayFlowAnalysis(issues);
+    } catch (e) {
+      console.error("Analysis error:", e);
+    }
+  });
+}
+
+function runFlowAnalysis(metadata) {
+  const issues = [];
+
+  const dmlIssues = flowService.findDMLElementsInsideLoops(metadata);
+  if (dmlIssues?.dmlElements?.length) {
+    issues.push({
+      issue: "DML Inside Loop",
+      severity: "High",
+      description: "DML operations inside loops detected.",
+      elements: dmlIssues.dmlElements,
+    });
+  }
+
+  const soqlIssues = flowService.findSOQLInsideLoops(metadata);
+  if (soqlIssues?.recordLookups?.length) {
+    issues.push({
+      issue: "SOQL Inside Loop",
+      severity: "High",
+      description: "SOQL queries inside loops detected.",
+      elements: soqlIssues.recordLookups,
+    });
+  }
+
+  const hardcodedIds = flowService.findHardcodedIds(metadata);
+  if (hardcodedIds.length) {
+    issues.push({
+      issue: "Hardcoded IDs",
+      severity: "Medium",
+      description: "Hardcoded record IDs detected.",
+      elements: hardcodedIds,
+    });
+  }
+
+  const unusedItems = Object.values(flowService.findUnusedItems(metadata)).flat();
+  if (unusedItems.length) {
+    issues.push({
+      issue: "Unused Resources",
+      severity: "Low",
+      description: "Unused variables/templates found.",
+      elements: unusedItems,
+    });
+  }
+
+  return issues;
+}
+
+function displayFlowAnalysis(issues) {
+  elements.analysisContainer.classList.remove("hidden");
+  elements.analysisResults.innerHTML = "";
+  elements.analysisTable.classList.add("hidden");
+  elements.noIssues.classList.add("hidden");
+
+  if (issues.length === 0) {
+    elements.noIssues.classList.remove("hidden");
+    return;
+  }
+
+  elements.analysisTable.classList.remove("hidden");
+
+  issues.forEach((issue) => {
+    const row = document.createElement("tr");
+    row.classList.add(issue.severity.toLowerCase() + "-severity");
+
+    const elementsList = issue.elements.map((e) => e.name || e).join(", ");
+    row.innerHTML = `<td>${issue.issue}</td><td>${issue.description}</td><td>${elementsList}</td>`;
+    elements.analysisResults.appendChild(row);
+  });
+}
+
 document.addEventListener("DOMContentLoaded", initializePopup);
