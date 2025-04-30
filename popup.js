@@ -91,18 +91,9 @@ async function initializePopup() {
     const flowId = await flowService.getFlowIdFromCurrentTab();
 
     if (!flowId) {
-      // throw new Error(
-      //   "No Flow ID found in the current tab. Please navigate to a Salesforce Flow."
-      // );
-      document.getElementById("searchFlowSection").style.display = "block";
-
-      const input = document.getElementById("flowSearchInput");
-      input.addEventListener("input", () => {
-        clearTimeout(debounceTimeout);
-        debounceTimeout = setTimeout(() => {
-          searchFlows(input.value.trim());
-        }, 3000);
-      });
+      throw new Error(
+        "No Flow ID found in the current tab. Please navigate to a Salesforce Flow."
+      );
     }
 
     // Fetch flow data
