@@ -23,6 +23,7 @@ const elements = {
   analysisTable: document.getElementById("analysisTable"),
   analysisResults: document.getElementById("analysisResults"),
   noIssues: document.getElementById("no-issues"),
+  flowSearchHeader : document.querySelector("#searchFlowSection > h3"),
 };
 
 let currentFlow = null;
@@ -87,7 +88,6 @@ async function openFlow(flowVersionId) {
   window.open(flowUrl, '_blank');
 }
 
-
 async function loadFlowVersions(flowId, flowName) {
   try {
     const versions = await flowService.fetchFlowVersions(flowId);
@@ -128,6 +128,8 @@ async function searchFlows(query) {
       !query || name.toLowerCase().includes(query.toLowerCase())
     );
 
+    elements.flowSearchHeader.textContent = `Search Flows (${filteredEntries.length})`;
+
     if (filteredEntries.length === 0) {
       elements.flowSearchResults.innerHTML = "<p>No matching flows found.</p>";
       return;
@@ -154,31 +156,6 @@ async function searchFlows(query) {
   } catch (error) {
     showError("Error searching flows.");
     console.error(error);
-  }
-}
-
-async function initializePopup() {
-  try {
-    const connection = await new SFConnection().init();
-    if (!connection) throw new Error("Failed to connect to Salesforce.");
-    flowService = new FlowService(connection);
-
-    const flowVersionId = await flowService.getFlowIdFromCurrentTab();
-    if (!flowVersionId) {
-      elements.searchFlowSection.style.display = "block";
-      elements.flowDownloadSection.style.display = "none";
-      searchFlows(elements.flowSearchInput.value.trim());
-      elements.flowSearchInput.addEventListener("input", () => {
-        clearTimeout(debounceTimeout);
-        debounceTimeout = setTimeout(() => searchFlows(elements.flowSearchInput.value.trim()), 500);
-      });
-      return;
-    }
-
-    await handleFlowSelection(flowVersionId);
-    setupActionListeners();
-  } catch (error) {
-    showError(error.message);
   }
 }
 
@@ -287,6 +264,31 @@ function displayFlowAnalysis(issues) {
     row.innerHTML = `<td>${issue.issue}</td><td>${issue.description}</td><td>${elementsList}</td>`;
     elements.analysisResults.appendChild(row);
   });
+}
+
+async function initializePopup() {
+  try {
+    const connection = await new SFConnection().init();
+    if (!connection) throw new Error("Failed to connect to Salesforce.");
+    flowService = new FlowService(connection);
+
+    const flowVersionId = await flowService.getFlowIdFromCurrentTab();
+    if (!flowVersionId) {
+      elements.searchFlowSection.style.display = "block";
+      elements.flowDownloadSection.style.display = "none";
+      searchFlows(elements.flowSearchInput.value.trim());
+      elements.flowSearchInput.addEventListener("input", () => {
+        clearTimeout(debounceTimeout);
+        debounceTimeout = setTimeout(() => searchFlows(elements.flowSearchInput.value.trim()), 500);
+      });
+      return;
+    }
+
+    await handleFlowSelection(flowVersionId);
+    setupActionListeners();
+  } catch (error) {
+    showError(error.message);
+  }
 }
 
 document.addEventListener("DOMContentLoaded", initializePopup);
