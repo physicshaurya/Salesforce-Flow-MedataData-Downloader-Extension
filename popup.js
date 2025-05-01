@@ -101,7 +101,10 @@ async function loadFlowVersions(flowId, flowName) {
       const versionText = document.createElement("span");
       versionText.classList.add("flow-version-text");
       versionText.textContent = `${flowName} (v${version.VersionNumber})`;
-    
+      
+      // Add active version if the particular versionis active
+      if(version.Status === "Active") versionText.textContent += ` - ${version.Status}`;
+
       // Add the click event listener to the span element
       versionText.addEventListener("click", () => openFlow(version.Id));
     
