@@ -93,6 +93,16 @@ export default class SFConnection {
   }
 
   /**
+   * Make a PATCH request to Salesforce API
+   * @param {string} endpoint - API endpoint
+   * @param {Object} body - Request body
+   * @returns {Promise<Object>} - API response
+   */
+  async patch(endpoint, body = {}) {
+    return this.#sendRequest(endpoint, "PATCH", body);
+  }
+
+  /**
    * Send a request to Salesforce API
    * @param {string} endpoint - API endpoint
    * @param {string} method - HTTP method (GET, POST, etc.)

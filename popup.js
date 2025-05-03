@@ -3,7 +3,7 @@ import FlowService from "./flow-service.js";
 
 // UI Elements
 const elements = {
-  flowDownloadSection : document.getElementById("flowDownloadSection"),
+  flowDownloadSection: document.getElementById("flowDownloadSection"),
   loader: document.getElementById("loader"),
   flowNameContainer: document.getElementById("flowNameContainer"),
   flowName: document.getElementById("flowName"),
@@ -14,6 +14,7 @@ const elements = {
   copyBtn: document.getElementById("copyJsonBtn"),
   describeFlowBtn: document.getElementById("describeFlowBtn"),
   runAnalysisBtn: document.getElementById("runAnalysisBtn"),
+  fixNomenclatureBtn: document.getElementById("fixNomenclatureBtn"),
   statusContainer: document.getElementById("statusContainer"),
   status: document.getElementById("status"),
   searchFlowSection: document.getElementById("searchFlowSection"),
@@ -23,7 +24,7 @@ const elements = {
   analysisTable: document.getElementById("analysisTable"),
   analysisResults: document.getElementById("analysisResults"),
   noIssues: document.getElementById("no-issues"),
-  flowSearchHeader : document.querySelector("#searchFlowSection > h3"),
+  flowSearchHeader: document.querySelector("#searchFlowSection > h3"),
 };
 
 let currentFlow = null;
@@ -42,13 +43,15 @@ function showFlowInfo(flow) {
   elements.errorContainer.classList.add("hidden");
   elements.flowNameContainer.classList.remove("hidden");
 
-  elements.flowName.textContent = flow.MasterLabel || flow.FullName || "Unknown";
+  elements.flowName.textContent =
+    flow.MasterLabel || flow.FullName || "Unknown";
   elements.flowVersion.textContent = flow.VersionNumber || "-";
 
   elements.describeFlowBtn.disabled = false;
   elements.downloadBtn.disabled = false;
   elements.copyBtn.disabled = false;
   elements.runAnalysisBtn.disabled = false;
+  elements.fixNomenclatureBtn.disabled = false;
 }
 
 function showStatus(message, isSuccess = true) {
@@ -65,14 +68,15 @@ function showStatus(message, isSuccess = true) {
 async function handleFlowSelection(flowVersionId) {
   try {
     currentFlow = await flowService.fetchFlow(flowVersionId);
-    if (!currentFlow || !currentFlow.Metadata) throw new Error("Failed to load metadata.");
+    if (!currentFlow || !currentFlow.Metadata)
+      throw new Error("Failed to load metadata.");
     showFlowInfo(currentFlow);
   } catch (e) {
     showError(e.message);
   }
 }
 
-async function openFlow(flowVersionId) {
+async function openFlow(flowVersionId, openType = "_blank") {
   if (!flowVersionId) {
     console.error("Flow Version ID is required to open the flow.");
     return;
@@ -84,8 +88,8 @@ async function openFlow(flowVersionId) {
   // Construct the full Flow Builder URL
   const flowUrl = `${baseUrl}/builder_platform_interaction/flowBuilder.app?flowId=${flowVersionId}`;
 
-  // Open in a new tab
-  window.open(flowUrl, '_blank');
+  // Open in a new tab or same based on open type
+  window.open(flowUrl, openType);
 }
 
 async function loadFlowVersions(flowId, flowName) {
@@ -96,22 +100,22 @@ async function loadFlowVersions(flowId, flowName) {
     versions.forEach((version) => {
       const versionDiv = document.createElement("div");
       versionDiv.classList.add("flow-search-result");
-    
+
       // Create a clickable element using a span instead of a button
       const versionText = document.createElement("span");
       versionText.classList.add("flow-version-text");
       versionText.textContent = `${flowName} (v${version.VersionNumber})`;
-      
-      // Add active version if the particular versionis active
-      if(version.Status === "Active") versionText.textContent += ` - ${version.Status}`;
+
+      // Add active version if the particular version is active
+      if (version.Status === "Active")
+        versionText.textContent += ` - ${version.Status}`;
 
       // Add the click event listener to the span element
       versionText.addEventListener("click", () => openFlow(version.Id));
-    
+
       versionDiv.appendChild(versionText);
       elements.flowSearchResults.appendChild(versionDiv);
     });
-    
   } catch (error) {
     showError("Failed to load flow versions.");
     console.error(error);
@@ -127,8 +131,8 @@ async function searchFlows(query) {
       return;
     }
 
-    const filteredEntries = [...flowsNameIdMap.entries()].filter(([name]) =>
-      !query || name.toLowerCase().includes(query.toLowerCase())
+    const filteredEntries = [...flowsNameIdMap.entries()].filter(
+      ([name]) => !query || name.toLowerCase().includes(query.toLowerCase())
     );
 
     elements.flowSearchHeader.textContent = `Search Flows (${filteredEntries.length})`;
@@ -143,30 +147,162 @@ async function searchFlows(query) {
     filteredEntries.forEach(([flowName, flowId]) => {
       const flowDiv = document.createElement("div");
       flowDiv.classList.add("flow-search-result");
-    
+
       // Create a clickable span instead of a button
       const flowText = document.createElement("span");
       flowText.classList.add("flow-name-text");
-      flowText.textContent = flowName;
-    
+      flowText.textContent = `${flowName}`;
+
       // Add the click event listener to the span element
-      flowText.addEventListener("click", () => loadFlowVersions(flowId, flowName));
-    
+      flowText.addEventListener("click", () =>
+        loadFlowVersions(flowId, flowName)
+      );
+
       flowDiv.appendChild(flowText);
       elements.flowSearchResults.appendChild(flowDiv);
     });
-    
   } catch (error) {
     showError("Error searching flows.");
     console.error(error);
   }
 }
 
+function fixNomenclature(originalMetadata) {
+  const renamedElements = [];
+  // Created a deep copy for manipulation
+  let metadata = JSON.parse(JSON.stringify(originalMetadata));
+
+  // Helper function to check if a name needs to be fixed
+  const needsFix = (name, prefix) => {
+    if (!name) return false;
+    return !name.toLowerCase().startsWith(prefix.toLowerCase());
+  };
+
+  // Helper function to convert to snake case
+  const toSnakeCase = (string) => {
+    return string
+      .replace(/([a-z])([A-Z])/g, "$1 $2") // separate camelCase words
+      .replace(/[\W_]+/g, " ") // replace non-word characters and underscores with space
+      .trim() // remove leading/trailing spaces
+      .split(/\s+/) // split on one or more spaces
+      .map((word) => word.toUpperCase()) // convert to uppercase
+      .join("_"); // join with underscores
+  };
+
+  // Helper function to update references in the metadata
+  function updateReferences(renamedElements, metadata) {
+    function deepReplace(obj) {
+      if (typeof obj === "string") {
+        renamedElements.forEach(({ oldName, newName }) => {
+          if (obj.includes(oldName)) {
+            obj = obj.split(oldName).join(newName); // avoid regex edge cases
+          }
+        });
+        return obj;
+      } else if (Array.isArray(obj)) {
+        return obj.map(deepReplace);
+      } else if (obj !== null && typeof obj === "object") {
+        const newObj = {};
+        for (const key in obj) {
+          newObj[key] = deepReplace(obj[key]); // only update value, not key
+        }
+        return newObj;
+      }
+      return obj; // return numbers, booleans, null as is
+    }
+  
+    return deepReplace(metadata);
+  }
+  
+
+  // Process formulas (Adding formula_)
+  if (metadata.formulas) {
+    metadata.formulas.forEach((item) => {
+      if (item.name && needsFix(item.name, "formula_")) {
+        const newName = `formula_${item.name}`;
+        renamedElements.push({
+          oldName: item.name,
+          newName: newName,
+          type: "Formula",
+        });
+        item.name = newName;
+      }
+    });
+  }
+
+  // Process variables (Adding var_)
+  if (metadata.variables) {
+    metadata.variables.forEach((variable) => {
+      if (variable.name && needsFix(variable.name, "var_")) {
+        const newName = `var_${variable.name}`;
+        renamedElements.push({
+          oldName: variable.name,
+          newName: newName,
+          type: "Variable",
+        });
+        variable.name = newName;
+      }
+    });
+  }
+
+  // Process constants (Snake Case + Adding CONST_)
+  if (metadata.constants) {
+    metadata.constants.forEach((constant) => {
+      if (constant.name) {
+        let pushFlag = false;
+        const oldName = constant.name;
+        let newName = toSnakeCase(oldName);
+
+        if (oldName !== newName) {
+          constant.name = newName;
+          pushFlag = true;
+        }
+        if (constant.name && needsFix(constant.name, "CONST_")) {
+          newName = `CONST_${constant.name}`;
+          pushFlag = true;
+          constant.name = newName;
+        }
+
+        if(pushFlag){
+          renamedElements.push({
+            oldName: oldName,
+            newName: newName,
+            type: "Constant",
+          });
+        }
+      }
+    });
+  }
+
+  // Process record lookups
+  const updatedMetadata = updateReferences(renamedElements, metadata);
+
+  if (updatedMetadata.recordLookups) {
+    updatedMetadata.recordLookups.forEach((lookup) => {
+      if (lookup.label && needsFix(lookup.label, "get_")) {
+        const newName = `get_${lookup.label}`;
+        renamedElements.push({
+          oldName: lookup.label,
+          newName: newName,
+          type: "Record Lookup",
+        });
+        lookup.label = newName;
+      }
+    });
+  }
+
+
+  return { renamedElements, updatedMetadata };
+}
+
 function setupActionListeners() {
   elements.downloadBtn.addEventListener("click", async () => {
     try {
       const success = await flowService.downloadMetadata(currentFlow);
-      showStatus(success ? "Metadata downloaded." : "Download failed.", success);
+      showStatus(
+        success ? "Metadata downloaded." : "Download failed.",
+        success
+      );
     } catch (e) {
       showStatus(`Error: ${e.message}`, false);
     }
@@ -174,7 +310,9 @@ function setupActionListeners() {
 
   elements.copyBtn.addEventListener("click", async () => {
     try {
-      const success = await flowService.copyMetadataToClipboard(currentFlow.Metadata);
+      const success = await flowService.copyMetadataToClipboard(
+        currentFlow.Metadata
+      );
       showStatus(success ? "Copied to clipboard." : "Copy failed.", success);
     } catch (e) {
       showStatus(`Error: ${e.message}`, false);
@@ -184,7 +322,10 @@ function setupActionListeners() {
   elements.describeFlowBtn.addEventListener("click", () => {
     try {
       const success = flowService.describeThisFlow(currentFlow.Metadata);
-      showStatus(success ? "Prompt copied to clipboard." : "Copy failed.", success);
+      showStatus(
+        success ? "Prompt copied to clipboard." : "Copy failed.",
+        success
+      );
     } catch (e) {
       showStatus(`Error: ${e.message}`, false);
     }
@@ -196,6 +337,44 @@ function setupActionListeners() {
       displayFlowAnalysis(issues);
     } catch (e) {
       console.error("Analysis error:", e);
+    }
+  });
+
+  elements.fixNomenclatureBtn.addEventListener("click", async () => {
+    try {
+      const { renamedElements, updatedMetadata } = fixNomenclature(
+        currentFlow.Metadata
+      );
+
+      if (renamedElements.length > 0) {
+        // Check if the current version is active
+        const isActive = currentFlow.Status === "Active";
+
+        if (isActive) {
+          showStatus(
+            `The current version of flow is active kindly create a new version to fix the nomenclature`,
+            false
+          );
+        } else {
+          const deployedFlowId = await flowService.deployFlow(
+            currentFlow,
+            updatedMetadata,
+            isActive
+          );
+          showStatus(
+            `Fixed nomenclature for ${renamedElements.length} elements:\n${renamedElements.map(e => `${e.oldName} → ${e.newName} (${e.type})`).join('\n')}`,
+            true
+          );
+          // Opening the fixed flow after 3 seconds
+          setTimeout(async () => {
+            await openFlow(deployedFlowId);
+          }, 3000);
+        }
+      } else {
+        showStatus("No elements needed nomenclature fixes.", true);
+      }
+    } catch (e) {
+      showStatus(`Error fixing nomenclature: ${e.message}`, false);
     }
   });
 }
@@ -233,7 +412,9 @@ function runFlowAnalysis(metadata) {
     });
   }
 
-  const unusedItems = Object.values(flowService.findUnusedItems(metadata)).flat();
+  const unusedItems = Object.values(
+    flowService.findUnusedItems(metadata)
+  ).flat();
   if (unusedItems.length) {
     issues.push({
       issue: "Unused Resources",
@@ -282,7 +463,10 @@ async function initializePopup() {
       searchFlows(elements.flowSearchInput.value.trim());
       elements.flowSearchInput.addEventListener("input", () => {
         clearTimeout(debounceTimeout);
-        debounceTimeout = setTimeout(() => searchFlows(elements.flowSearchInput.value.trim()), 500);
+        debounceTimeout = setTimeout(
+          () => searchFlows(elements.flowSearchInput.value.trim()),
+          500
+        );
       });
       return;
     }

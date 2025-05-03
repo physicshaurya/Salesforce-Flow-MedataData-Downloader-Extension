@@ -145,6 +145,67 @@ export default class FlowService {
     }
   }
 
+  /**
+   * Get Flow Version ID (301) from Flow Definition ID (300) and version number
+   * @param {string} flowDefinitionId - Flow Definition ID (starts with '300')
+   * @param {number} versionNumber - Version number of the flow
+   * @returns {Promise<string>} - Flow Version ID (starts with '301')
+   */
+  async getFlowVersionId(flowDefinitionId, versionNumber) {
+    try {
+      if (!flowDefinitionId || !flowDefinitionId.startsWith("300")) {
+        throw new Error(
+          "A valid Flow Definition ID (starts with '300') is required."
+        );
+      }
+
+      if (!versionNumber || versionNumber < 1) {
+        throw new Error("A valid version number is required.");
+      }
+
+      const apiVersion = this.#connection.getApiVersion();
+      const query = `
+        /services/data/${apiVersion}/tooling/query/?q=
+        SELECT+Id+
+        FROM+Flow+
+        WHERE+DefinitionId='${flowDefinitionId}'+AND+VersionNumber=${versionNumber}
+      `.replace(/\s+/g, "");
+
+      const result = await this.#connection.get(query);
+
+      if (!result.records || result.records.length === 0) {
+        throw new Error(
+          `No flow version found for Definition ID ${flowDefinitionId} and version ${versionNumber}`
+        );
+      }
+
+      return result.records[0].Id;
+    } catch (error) {
+      console.error("Error getting flow version ID:", error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get the latest Flow Version ID by created date
+   * @param {string} flowDefinitionId - Flow Definition ID (starts with '300')
+   * @returns {Promise<string>} - Latest Flow Version ID
+   */
+  async getLatestFlowVersionId(flowDefinitionId) {
+    const apiVersion = this.#connection.getApiVersion();
+    const query = `
+      /services/data/${apiVersion}/tooling/query/?q=
+      SELECT+Id+
+      FROM+Flow+
+      WHERE+DefinitionId='${flowDefinitionId}'
+      ORDER+BY+CreatedDate+DESC
+      LIMIT+1
+    `.replace(/\s+/g, "");
+
+    const result = await this.#connection.get(query);
+    return result.records[0].Id;
+  }
+
   async baseUrl() {
     return this.#connection.getBaseUrl();
   }
@@ -258,6 +319,32 @@ export default class FlowService {
     } catch (error) {
       console.error("Error describing the flow:", error);
       return false;
+    }
+  }
+
+  /**
+   * Deploy flow metadata to Salesforce
+   * @param {Object} flow - Flow object with metadata
+   * @param {Object} updatedMetadata - Updated Metadata of the flow 
+   * @param {boolean} createNewVersion - Whether to create a new version
+   * @returns {Promise<Object>} - The deployed flow version id
+   */
+  async deployFlow(flow,updatedMetadata, createNewVersion = false) {
+    try {
+      if (!flow || !updatedMetadata) {
+        throw new Error("Invalid data to deploy flow");
+      }
+
+      const apiVersion = this.#connection.getApiVersion();
+      const endpoint = `/services/data/${apiVersion}/tooling/sobjects/Flow/${flow.Id}`;
+
+        await this.#connection.patch(endpoint, {
+          Metadata: updatedMetadata,
+        });
+        return await this.getFlowVersionId(flow.DefinitionId, flow.VersionNumber);
+    } catch (error) {
+      console.error("Error deploying flow:", error);
+      throw error;
     }
   }
 
